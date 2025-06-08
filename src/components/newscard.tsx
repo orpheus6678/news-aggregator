@@ -11,13 +11,15 @@ import {
   CardTitle,
 } from "@/ui/card"
 
-type NewsCardProps = {
+type NewsProps = {
   title: string
   body: string
   imgSrc: string
   imgAlt: string
   link: string
-} & React.ComponentProps<"div">
+}
+
+type NewsCardProps = NewsProps & React.ComponentProps<typeof Card>
 
 const banglaSerif = Noto_Serif_Bengali()
 const banglaSans = Noto_Sans_Bengali()
@@ -32,20 +34,38 @@ const NewsCard = ({
   ...props
 }: NewsCardProps) => (
   <Card
-    className={cn("max-w-md py-8 text-xl", banglaSerif.className, className)}
+    className={cn(
+      "max-w-sm min-w-xs py-8 text-xl sm:max-w-md",
+      banglaSerif.className,
+      className,
+    )}
     {...props}
   >
     <CardHeader>
-      <CardTitle>{title}</CardTitle>
+      <CardTitle>
+        <a className="hover:text-blue-500" href={link}>
+          {title}
+        </a>
+      </CardTitle>
     </CardHeader>
     <CardContent className="flex flex-col items-center space-y-6">
-      <CardDescription className={`text-base ${banglaSans.className}`}>
+      <CardDescription
+        className={`text-base ${banglaSans.className} hover:text-gray-600`}
+      >
         {body}
       </CardDescription>
-      <Image width={375} height={250} alt={imgAlt} src={imgSrc} />
+      <div className="h-[250px] w-[375px] overflow-hidden rounded-lg">
+        <Image
+          className="transition-transform duration-300 ease-out hover:scale-110"
+          width={375}
+          height={250}
+          alt={imgAlt}
+          src={imgSrc}
+        />
+      </div>
     </CardContent>
   </Card>
 )
 
 export default NewsCard
-export type { NewsCardProps }
+export type { NewsProps, NewsCardProps }

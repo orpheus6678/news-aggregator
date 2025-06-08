@@ -2,7 +2,8 @@ import * as fs from "fs/promises"
 
 import * as cheerio from "cheerio"
 
-import NewsCard from "@/components/newscard"
+import FilterCard from "@/components/filtercard"
+import NewsCard, { NewsProps } from "@/components/newscard"
 
 export default async function Home() {
   const $ = await cheerio.fromURL("https://www.bd-pratidin.com/")
@@ -25,6 +26,7 @@ export default async function Home() {
     await fs.writeFile("dump/newLead3rd.html", formattedHtml)
   }
 
+  // prettier-ignore
   const news = $newLead3rd.children().map((_, el) =>
     $(el).extract({
       imgAlt: { selector: "img", value: "alt" },
@@ -32,22 +34,17 @@ export default async function Home() {
       link: { selector: "a", value: "href" },
       title: "h5",
       body: "p",
-    }),
+    }) as NewsProps,
   )
 
   return (
-    <div className="mx-auto w-max">
-      {news.map((i, el) => (
-        <NewsCard
-          key={i}
-          className="my-4"
-          title={el.title!}
-          body={el.body!}
-          imgSrc={el.imgSrc!}
-          imgAlt={el.imgAlt!}
-          link={el.link!}
-        />
-      ))}
+    <div className="m-4 flex items-start space-x-4">
+      <FilterCard className="sticky top-4" />
+      <div className="space-y-4">
+        {news.map((i, el) => (
+          <NewsCard key={i} {...el} />
+        ))}
+      </div>
     </div>
   )
 }
