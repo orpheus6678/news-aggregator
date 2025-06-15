@@ -24,8 +24,10 @@ export async function collectLinks({ limit }: { limit?: number }) {
   if (limit && limit <= 0) throw new Error("invalid limit")
 
   const url = "https://www.bd-pratidin.com"
-  const page = await fetch(url).then((res) => res.text())
-  const $ = cheerio.load(page)
+  const $ = await fetch(url)
+    .then((res) => res.text())
+    .then(cheerio.load)
+
   const $anchors = $("a")
 
   const newsLinks = $anchors
@@ -62,8 +64,10 @@ export async function collectLinks({ limit }: { limit?: number }) {
 }
 
 export async function collectNewsFromLink(url: string | URL) {
-  const page = await fetch(url).then((res) => res.text())
-  const $ = cheerio.load(page)
+  const $ = await fetch(url)
+    .then((res) => res.text())
+    .then(cheerio.load)
+
   const $detailsArea = $(".detailsArea")
 
   const newsWithoutURL = $detailsArea.extract({
