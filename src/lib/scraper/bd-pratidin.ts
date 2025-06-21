@@ -11,7 +11,7 @@ type News = {
   category: string
   publishedAt: string
   updatedAt: string
-  topics: string[]
+  tags: string[]
   img: {
     src: string
     alt: string
@@ -24,8 +24,10 @@ export async function collectLinks({ limit }: { limit?: number }) {
   if (limit && limit <= 0) throw new Error("invalid limit")
 
   const url = "https://www.bd-pratidin.com"
-  const page = await fetch(url).then((res) => res.text())
-  const $ = cheerio.load(page)
+  const $ = await fetch(url)
+    .then((res) => res.text())
+    .then(cheerio.load)
+
   const $anchors = $("a")
 
   const newsLinks = $anchors
@@ -53,17 +55,14 @@ export async function collectLinks({ limit }: { limit?: number }) {
     .map((el) => `${$(el).attr("href")}`)
     .slice(0, limit)
 
-  if (process.env.NODE_ENV === "development") {
-    await fs.mkdir("dump", { recursive: true })
-    await fs.writeFile("dump/bdPratidinLinks.txt", newsLinks.join("\n"))
-  }
-
   return newsLinks
 }
 
 export async function collectNewsFromLink(url: string | URL) {
-  const page = await fetch(url).then((res) => res.text())
-  const $ = cheerio.load(page)
+  const $ = await fetch(url)
+    .then((res) => res.text())
+    .then(cheerio.load)
+
   const $detailsArea = $(".detailsArea")
 
   const newsWithoutURL = $detailsArea.extract({
@@ -96,7 +95,7 @@ export async function collectNewsFromLink(url: string | URL) {
       },
     },
 
-    topics: [
+    tags: [
       {
         selector: ".tagArea>ul>li>a",
         value: (el) => $(el).text().trim(),

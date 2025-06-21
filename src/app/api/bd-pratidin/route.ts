@@ -21,6 +21,7 @@ export async function GET(req: NextRequest) {
       await Promise.all(
         newsLinks.map((url) =>
           collectNewsFromBangladeshPratidinLink(url).catch((_err) => {
+            /* TODO: add better logging */
             console.error(`${new URL(url).pathname} ${chalk.red("throwed")}`)
             return undefined
           }),
