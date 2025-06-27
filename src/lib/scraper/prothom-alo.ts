@@ -12,9 +12,10 @@ export async function collectLinks({ limit }: { limit?: number }) {
 }
 
 const Base = z.looseObject({
-  url: z.string(),
   headline: z.string(),
   slug: z.string(),
+  authors: z.array(z.looseObject({ name: z.string() })),
+  "author-name": z.string(),
 
   alternative: z.looseObject({
     home: z.optional(
@@ -31,6 +32,7 @@ const Base = z.looseObject({
                   }),
                 ),
               ),
+
               source: z.string().nullable().optional(),
               "hero-image-attribution": z.string().nullable().optional(),
               "hero-image-alt-text": z.string().nullable().optional(),
@@ -43,61 +45,45 @@ const Base = z.looseObject({
       }),
     ),
   }),
-
-  "author-name": z.string(),
-  "hero-image-s3-key": z.string().nullable(),
-
-  sections: z.array(
-    z.looseObject({
-      slug: z.string(),
-      name: z.string(),
-      "section-url": z.string(),
-      "display-name": z.string(),
-    }),
-  ),
-
-  "hero-image-metadata": z.nullable(
-    z.looseObject({
-      width: z.number(),
-      height: z.number(),
-      "mime-type": z.string().optional(),
-    }),
-  ),
-
-  authors: z.array(
-    z.looseObject({
-      slug: z.string(),
-      name: z.string(),
-      "avatar-url": z.string().nullable(),
-      "twitter-handle": z.string().nullable(),
-      "avatar-s3-key": z.string().nullable(),
-    }),
-  ),
 })
 
-const TextElement = z.looseObject({
-  type: z.literal("text"),
-  title: z.string(),
-  metadata: z.looseObject({}),
-  text: z.string(),
-  subtype: z.nullable(
-    z.literal([
-      "summary",
-      "blurb",
-      "quote",
-      "blockquote",
-      "also-read",
-      "bigfact",
-      "cta",
-    ]),
-  ),
-})
+const TextElement = z.discriminatedUnion("subtype", [
+  z.looseObject({
+    type: z.literal("text"),
+    text: z.string(),
+
+    subtype: z.nullable(
+      z.literal(["summary", "blurb", "quote", "blockquote", "bigfact", "cta"]),
+    ),
+  }),
+
+  z.looseObject({
+    type: z.literal("text"),
+    subtype: z.literal("also-read"),
+    text: z.string(),
+
+    metadata: z.looseObject({
+      "linked-story-id": z.string(),
+
+      "linked-story": z.looseObject({
+        ...Base.shape,
+        "frontend-url": z.string(),
+        authors: z.array(
+          z.looseObject({
+            name: z.string(),
+            email: z.string().optional(),
+          }),
+        ),
+      }),
+    }),
+  }),
+])
 
 const ImageElement = z.looseObject({
   type: z.literal("image"),
   title: z.string(),
-  metadata: z.looseObject({}),
   "image-s3-key": z.string(),
+  "image-attribution": z.string(),
   "alt-text": z.string().nullable(),
 
   "image-metadata": z.looseObject({
@@ -109,67 +95,105 @@ const ImageElement = z.looseObject({
 
 const TitleElement = z.looseObject({
   type: z.literal("title"),
-  title: z.string(),
-  metadata: z.looseObject({}),
   text: z.string(),
 })
+
+const EmbedElement = z.discriminatedUnion("subtype", [
+  z.looseObject({
+    type: z.literal("jsembed"),
+    "embed-js": z.string(),
+    subtype: z.literal("tiktok-video"),
+
+    metadata: z.looseObject({
+      "tiktok-video-id": z.string(),
+      "tiktok-video-url": z.string(),
+      provider: z.literal("tiktok"),
+    }),
+  }),
+
+  z.looseObject({
+    type: z.literal("jsembed"),
+    "embed-js": z.string(),
+    subtype: z.literal("tweet"),
+
+    metadata: z.looseObject({
+      "tweet-url": z.string(),
+      provider: z.literal("twitter"),
+      "tweet-id": z.string(),
+    }),
+  }),
+
+  z.looseObject({
+    type: z.literal("jsembed"),
+    "embed-js": z.string(),
+    subtype: z.null(),
+  }),
+])
+
+const CompositeElement = z.discriminatedUnion("subtype", [
+  z.looseObject({
+    type: z.literal("composite"),
+    title: z.string(),
+    metadata: z.looseObject({}),
+    subtype: z.literal("references"),
+
+    // contains StoryElements
+    "story-elements": z.looseObject({}).array(),
+  }),
+
+  z.looseObject({
+    type: z.literal("composite"),
+    title: z.string(),
+    subtype: z.literal("image-gallery"),
+    "story-elements": z.array(ImageElement),
+
+    metadata: z.looseObject({
+      type: z.literal(["gallery", "slideshow"]),
+    }),
+  }),
+])
 
 export const StoryElement = z.discriminatedUnion("type", [
   TextElement,
   ImageElement,
   TitleElement,
+  EmbedElement,
+  CompositeElement,
 
   z.looseObject({
     type: z.literal("youtube-video"),
-    title: z.string(),
-    metadata: z.looseObject({}),
     url: z.string(),
     "embed-url": z.string(),
   }),
 
   z.looseObject({
-    type: z.literal("jsembed"),
-    title: z.string(),
-    metadata: z.looseObject({}),
-    "embed-js": z.string(),
-  }),
-
-  z.looseObject({
     type: z.literal("data"),
     title: z.string(),
-    metadata: z.looseObject({}),
+    metadata: z.looseObject({ "has-header": z.boolean() }),
     subtype: z.literal("table"),
+
     data: z.looseObject({
       content: z.string(),
       "content-type": z.literal("csv"),
     }),
   }),
-
-  z.discriminatedUnion("subtype", [
-    z.looseObject({
-      type: z.literal("composite"),
-      title: z.string(),
-      metadata: z.looseObject({}),
-      subtype: z.literal("references"),
-
-      // contains StoryElements
-      "story-elements": z.looseObject({}).array(),
-    }),
-
-    // known only to exist in story-template: interview
-    // but kept regardless for simplification's sake
-    z.looseObject({
-      type: z.literal("composite"),
-      title: z.string(),
-      metadata: z.looseObject({}),
-      subtype: z.literal("image-gallery"),
-      "story-elements": z.looseObject({}).array(),
-    }),
-  ]),
 ])
 
-export const HomeCard = z.looseObject({
+export const HomeStory = z.looseObject({
   ...Base.shape,
+  url: z.string(),
+  subheadline: z.string().nullable(),
+  "last-published-at": z.number(),
+
+  authors: z.array(
+    z.looseObject({
+      slug: z.string(),
+      name: z.string(),
+      "avatar-url": z.string().nullable(),
+      "twitter-handle": z.string().nullable(),
+      "avatar-s3-key": z.string().nullable(),
+    }),
+  ),
 
   tags: z.array(
     z.looseObject({
@@ -177,9 +201,6 @@ export const HomeCard = z.looseObject({
       name: z.string(),
     }),
   ),
-
-  "last-published-at": z.number(),
-  subheadline: z.string().nullable(),
 
   sections: z.array(
     z.looseObject({
@@ -190,8 +211,17 @@ export const HomeCard = z.looseObject({
     }),
   ),
 
+  "hero-image-s3-key": z.string().nullable(),
   "hero-image-attribution": z.string().nullable(),
   "hero-image-caption": z.string().nullable(),
+
+  "hero-image-metadata": z.nullable(
+    z.looseObject({
+      width: z.number(),
+      height: z.number(),
+      "mime-type": z.string().optional(),
+    }),
+  ),
 
   metadata: z.looseObject({
     excerpt: z.string().optional(),
@@ -218,26 +248,12 @@ export const NewsCard = z.looseObject({
     "social-share": z.looseObject({
       title: z.string(),
       message: z.string().nullable(),
-      image: z.nullable(
-        z.looseObject({
-          key: z.string(),
-          url: z.string().nullable(),
-          attribution: z.string().nullable(),
-          caption: z.string().nullable(),
-          "alt-text": z.string().nullable(),
-          metadata: z.looseObject({
-            width: z.number(),
-            height: z.number(),
-            "mime-type": z.string().optional(),
-          }),
-        }),
-      ),
     }),
   }),
 })
 
 const BaseStory = z.looseObject({
-  ...HomeCard.shape,
+  ...HomeStory.shape,
 
   seo: z.looseObject({
     "meta-keywords": z.array(z.string()).optional(),
@@ -245,7 +261,45 @@ const BaseStory = z.looseObject({
   }),
 
   "updated-at": z.number(),
-  "linked-stories": z.optional(z.record(z.string(), Base)),
+
+  "linked-stories": z.optional(
+    z.record(
+      z.string(),
+      z.looseObject({
+        ...Base.shape,
+        url: z.string(),
+        "hero-image-s3-key": z.string().nullable(),
+
+        authors: z.array(
+          z.looseObject({
+            slug: z.string(),
+            name: z.string(),
+            "avatar-url": z.string().nullable(),
+            "twitter-handle": z.string().nullable(),
+            "avatar-s3-key": z.string().nullable(),
+          }),
+        ),
+
+        sections: z.array(
+          z.looseObject({
+            slug: z.string(),
+            name: z.string(),
+            "section-url": z.string(),
+            "display-name": z.string(),
+          }),
+        ),
+
+        "hero-image-metadata": z.nullable(
+          z.looseObject({
+            width: z.number(),
+            height: z.number(),
+            "mime-type": z.string().optional(),
+          }),
+        ),
+      }),
+    ),
+  ),
+
   "content-created-at": z.number(),
   "published-at": z.number(),
   "is-live-blog": z.boolean(),
@@ -264,17 +318,34 @@ const BaseStory = z.looseObject({
 
 // not designed to handle story-template: visual-story
 export const Story = z.discriminatedUnion("story-template", [
+  z.looseObject({ "story-template": z.literal("visual-story") }),
+
   z.looseObject({
     ...BaseStory.shape,
     cards: z.array(NewsCard),
+    "story-template": z.literal(["live-blog", "text", "video", "photo"]),
+  }),
 
-    "story-template": z.literal([
-      "live-blog",
-      "text",
-      "video",
-      "photo",
-      "listicle",
-    ]),
+  z.looseObject({
+    ...BaseStory.shape,
+    "story-template": z.literal("listicle"),
+
+    // prettier-ignore
+    cards: z.tuple([
+      z.looseObject({
+        ...NewsCard.shape,
+        "card-type": z.literal("introduction"),
+      }),
+    ])
+      .rest(
+        z.looseObject({
+          ...NewsCard.shape,
+          listicleTitle: z.looseObject({
+            type: z.literal("title"),
+            text: z.string(),
+          }),
+        }),
+      ),
   }),
 
   z.looseObject({
@@ -284,27 +355,22 @@ export const Story = z.discriminatedUnion("story-template", [
     cards: z.array(
       z.looseObject({
         ...NewsCard.shape,
+
         "story-elements": z.array(
           z.discriminatedUnion("type", [
             TitleElement,
             ImageElement,
 
             // TextElement with three more subtypes
-            z.looseObject({
-              ...TextElement.shape,
-              subtype: z.literal([
-                "summary",
-                "blurb",
-                "quote",
-                "blockquote",
-                "also-read",
-                "bigfact",
-                "cta",
-                "question",
-                "answer",
-                "q-and-a",
-              ]),
-            }),
+            z.discriminatedUnion("subtype", [
+              ...TextElement.options,
+
+              z.looseObject({
+                type: z.literal("text"),
+                subtype: z.literal(["question", "answer", "q-and-a"]),
+                text: z.string(),
+              }),
+            ]),
           ]),
         ),
       }),
@@ -314,10 +380,11 @@ export const Story = z.discriminatedUnion("story-template", [
 
 export const Collection = z.looseObject({
   type: z.literal("collection"),
-  get items(): z.ZodType<(StoryVariant | Collection)[]> {
+
+  get items(): z.ZodType<(_TypeStory | Collection)[]> {
     return z.array(
       z.discriminatedUnion("type", [
-        z.looseObject({ type: z.literal("story"), story: HomeCard }),
+        z.looseObject({ type: z.literal("story"), story: HomeStory }),
         Collection,
       ]),
     )
@@ -342,7 +409,7 @@ export const NewsSP = z.looseObject({
   }),
 })
 
-const flattenCollectLinks = (items: (StoryVariant | Collection)[]) =>
+const flattenCollectLinks = (items: (_TypeStory | Collection)[]) =>
   items.reduce((acc: string[], item) => {
     if (item.type === "story") acc.push(item.story.url)
     else acc.push(...flattenCollectLinks(item.items))
@@ -374,20 +441,15 @@ export async function getPayload(url: string | URL) {
   return JSON.parse(payload ?? "null")
 }
 
-export type StoryElement = z.infer<typeof StoryElement>
-export type HomeCard = z.infer<typeof HomeCard>
-export type NewsCard = z.infer<typeof NewsCard>
-export type Story = z.infer<typeof Story>
-
-type StoryVariant = {
+type _TypeStory = {
   type: "story"
-  story: HomeCard
+  story: z.infer<typeof HomeStory>
   [key: string]: unknown
 }
 
-export type Collection = {
+type Collection = {
   type: "collection"
-  items: (StoryVariant | Collection)[]
+  items: (_TypeStory | Collection)[]
 }
 
 export type HomeSP = z.infer<typeof HomeSP>
