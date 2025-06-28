@@ -1,15 +1,4 @@
-import { parse, SyntaxKind, walk, WalkOptions } from "html5parser"
 import { z } from "zod/v4"
-
-export async function collectLinks({ limit }: { limit?: number }) {
-  if (limit && limit <= 0) throw new Error("invalid limit")
-
-  const url = "https://www.prothomalo.com"
-  const rawHome = getPayload(url)
-  const parsed = await HomeSP.parseAsync(rawHome)
-
-  return flattenCollectLinks(parsed.qt.data.collection.items).slice(0, limit)
-}
 
 const Base = z.looseObject({
   headline: z.string(),
@@ -51,10 +40,36 @@ const TextElement = z.discriminatedUnion("subtype", [
   z.looseObject({
     type: z.literal("text"),
     text: z.string(),
+    subtype: z.nullable(z.literal(["summary", "bigfact"])),
+  }),
 
-    subtype: z.nullable(
-      z.literal(["summary", "blurb", "quote", "blockquote", "bigfact", "cta"]),
-    ),
+  z.looseObject({
+    type: z.literal("text"),
+    text: z.string(),
+    subtype: z.literal("blurb"),
+    metadata: z.looseObject({ content: z.string() }),
+  }),
+
+  z.looseObject({
+    type: z.literal("text"),
+    text: z.string(),
+    subtype: z.literal(["quote", "blockquote"]),
+    metadata: z.looseObject({
+      content: z.string(),
+      atrribution: z.string(),
+    }),
+  }),
+
+  z.looseObject({
+    type: z.literal("text"),
+    text: z.string(),
+    subtype: z.literal("cta"),
+
+    metadata: z.looseObject({
+      "cta-title": z.string(),
+      "cta-url": z.string(),
+      "open-in-new-tab": z.literal(true).optional(),
+    }),
   }),
 
   z.looseObject({
@@ -137,7 +152,7 @@ const CompositeElement = z.discriminatedUnion("subtype", [
     metadata: z.looseObject({}),
     subtype: z.literal("references"),
 
-    // contains StoryElements
+    // TODO: contains story-elements
     "story-elements": z.looseObject({}).array(),
   }),
 
@@ -153,7 +168,7 @@ const CompositeElement = z.discriminatedUnion("subtype", [
   }),
 ])
 
-export const StoryElement = z.discriminatedUnion("type", [
+const StoryElement = z.discriminatedUnion("type", [
   TextElement,
   ImageElement,
   TitleElement,
@@ -179,7 +194,7 @@ export const StoryElement = z.discriminatedUnion("type", [
   }),
 ])
 
-export const HomeStory = z.looseObject({
+const HomeStory = z.looseObject({
   ...Base.shape,
   url: z.string(),
   subheadline: z.string().nullable(),
@@ -238,7 +253,7 @@ export const HomeStory = z.looseObject({
   ]),
 })
 
-export const NewsCard = z.looseObject({
+const NewsCard = z.looseObject({
   "story-elements": z.array(StoryElement),
   "card-updated-at": z.number(),
   "card-added-at": z.number(),
@@ -259,8 +274,6 @@ const BaseStory = z.looseObject({
     "meta-keywords": z.array(z.string()).optional(),
     "meta-description": z.string().optional(),
   }),
-
-  "updated-at": z.number(),
 
   "linked-stories": z.optional(
     z.record(
@@ -300,6 +313,7 @@ const BaseStory = z.looseObject({
     ),
   ),
 
+  "updated-at": z.number(),
   "content-created-at": z.number(),
   "published-at": z.number(),
   "is-live-blog": z.boolean(),
@@ -378,7 +392,7 @@ export const Story = z.discriminatedUnion("story-template", [
   }),
 ])
 
-export const Collection = z.looseObject({
+const Collection = z.looseObject({
   type: z.literal("collection"),
 
   get items(): z.ZodType<(_TypeStory | Collection)[]> {
@@ -409,48 +423,13 @@ export const NewsSP = z.looseObject({
   }),
 })
 
-const flattenCollectLinks = (items: (_TypeStory | Collection)[]) =>
-  items.reduce((acc: string[], item) => {
-    if (item.type === "story") acc.push(item.story.url)
-    else acc.push(...flattenCollectLinks(item.items))
-    return acc
-  }, [])
-
-export async function getPayload(url: string | URL) {
-  let payload = null
-
-  const walkOpts = {
-    enter(node) {
-      if (
-        node.type === SyntaxKind.Tag &&
-        node.name === "script" &&
-        node.body &&
-        // prettier-ignore
-        node.attributes.some(({ name, value }) => name.value === "id" && value?.value === "static-page")
-      ) {
-        const [body] = node.body
-        if (body.type === SyntaxKind.Text) payload = body.value
-      }
-    },
-  } satisfies WalkOptions
-
-  await fetch(url)
-    .then((res) => res.text())
-    .then((rawHtml) => walk(parse(rawHtml), walkOpts))
-
-  return JSON.parse(payload ?? "null")
-}
-
-type _TypeStory = {
+export type _TypeStory = {
   type: "story"
   story: z.infer<typeof HomeStory>
   [key: string]: unknown
 }
 
-type Collection = {
+export type Collection = {
   type: "collection"
   items: (_TypeStory | Collection)[]
 }
-
-export type HomeSP = z.infer<typeof HomeSP>
-export type NewsSP = z.infer<typeof NewsSP>

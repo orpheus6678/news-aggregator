@@ -1,43 +1,85 @@
 import * as fs from "fs/promises"
 
 import * as cheerio from "cheerio"
+import pLimit from "p-limit"
 import prettier from "prettier"
+import { z } from "zod/v4"
 
-import {
-  Collection,
-  HomeSP,
-  NewsSP,
-  StoryType,
-} from "@/lib/scraper/prothom-alo"
+import * as ProthomAlo from "@/lib/scraper/prothom-alo/main"
 
 export default async function Home() {
-  const $home = await loadPage("https://www.prothomalo.com")
-  const homeUnparsed = $home("#static-page").html()!
-  const homeUnvalidated = JSON.parse(homeUnparsed)
-  const homeParsed = HomeSP.parse(homeUnvalidated)
+  const limiter = pLimit(10)
 
-  const stories = homeParsed.qt.data.collection.items.flatMap(({ items }) =>
-    flattenCollected(items),
+  let behold: string
+  const localFetch = false
+  const storeLocation = "junk/prothomalo.json"
+
+  if (localFetch) behold = await fs.readFile(storeLocation, "utf-8")
+  else {
+    const rawHome = await ProthomAlo.getPayload("https://www.prothomalo.com")
+    const homeSP = ProthomAlo.HomeSP.parse(rawHome)
+
+    const rawNewsArray = await Promise.all(
+      flattenToHomeCards(homeSP.qt.data.collection.items)
+        .filter((s) => s["story-template"] !== "visual-story")
+        .map((card) =>
+          limiter(() => ProthomAlo.getPayload(card.url)).then((pl) => {
+            if (pl === null) console.warn(`no #static-page in ${card.url}`)
+            return pl
+          }),
+        )
+        .filter((pl) => pl !== null),
+    )
+
+    const rawStories = rawNewsArray.map((rawNews) => rawNews.qt.data.story)
+    behold = JSON.stringify(rawStories, null, 2)
+    await fs.writeFile(storeLocation, behold)
+  }
+
+  const selectedStories = JSON.parse(behold)
+    // .filter((s: any) => Object.keys(s.alternative).length > 0)
+    // .filter((s: any) => s["story-template"] === "live-blog")
+    .filter((s: any) =>
+      s.cards.some((c: any) =>
+        c["story-elements"].some(
+          (se: any) => se.type === "composite" && se.subtype === "references",
+        ),
+      ),
+    )
+
+  const url = "https://www.prothomalo.com/video/v0brel0t8v"
+  const stories = z.array(ProthomAlo.Story).parse(selectedStories)
+
+  // const story = await ProthomAlo.getPayload(url)
+  //   .then(ProthomAlo.NewsSP.parse)
+  //   .then((s) => s.qt.data.story)
+
+  const story = stories.find(
+    (s) =>
+      s["story-template"] !== "visual-story" &&
+      s.cards.some((c) => c.metadata["social-share"].shareable),
   )
 
-  const { url } = stories.find((s) => s["story-template"] === "live-blog")!
-
-  const $news = await loadPage(url)
-  const newsUnparsed = $news("#static-page").html()!
-  const newsUnvalidated = JSON.parse(newsUnparsed)
-  const newsParsed = NewsSP.parse(newsUnvalidated)
-
-  return <pre className="text-sm">{JSON.stringify(newsParsed, null, 2)}</pre>
+  return (
+    <pre className="text-sm">
+      selected {stories.length} stories {JSON.stringify(stories, null, 2)}
+    </pre>
+  )
 }
 
-const loadPage = (url: string | URL): Promise<cheerio.CheerioAPI> =>
-  fetch(url)
-    .then((res) => res.text())
-    .then(cheerio.load)
+// prettier-ignore
+type Collection = z.infer<typeof ProthomAlo.HomeSP>["qt"]["data"]["collection"]["items"][number]
+type StoryOrCollection = Collection["items"][number]
+type Story = Exclude<StoryOrCollection, Collection>["story"]
 
-const flattenCollected = (items: (StoryType | Collection)[]) =>
-  items.reduce((acc: StoryType["story"][], item) => {
-    if (item.type === "story") acc.push(item.story)
-    else acc.push(...flattenCollected(item.items))
-    return acc
-  }, [])
+function flattenToHomeCards(items: StoryOrCollection[]) {
+  const stack = [...items]
+  const stories: Story[] = Array()
+  let item: StoryOrCollection | undefined
+
+  while ((item = stack.pop()))
+    if (item.type === "story") stories.push(item.story)
+    else stack.push(...item.items)
+
+  return stories
+}
