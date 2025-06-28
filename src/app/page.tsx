@@ -13,6 +13,7 @@ export default async function Home() {
   let behold: string
   const localFetch = false
   const storeLocation = "junk/prothomalo.json"
+  await fs.mkdir("junk", { recursive: true })
 
   if (localFetch) behold = await fs.readFile(storeLocation, "utf-8")
   else {
