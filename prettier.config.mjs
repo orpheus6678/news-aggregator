@@ -29,6 +29,13 @@ const config = {
   semi: false,
   jsonRecursiveSort: true,
 
+  overrides: [
+    {
+      files: "pnpm-lock.yaml",
+      options: { singleQuote: true },
+    },
+  ],
+
   plugins: [
     "prettier-plugin-sort-json",
     "@ianvs/prettier-plugin-sort-imports",
