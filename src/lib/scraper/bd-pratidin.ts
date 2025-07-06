@@ -1,24 +1,34 @@
 import * as fs from "fs/promises"
 
+import { NewsSource } from "@prisma/client"
 import * as cheerio from "cheerio"
+import { z } from "zod/v4"
 
 import { banglaDateTimetoEnglish } from "@/lib/datetime"
+import prisma from "@/lib/prisma"
 
-type News = {
-  url: string
-  title: string
-  author: string
-  category: string
-  publishedAt: string
-  updatedAt: string
-  tags: string[]
-  img: {
-    src: string
-    alt: string
-    footer: string
-  }
-  text: string[]
-}
+const NewsSchema = z.object({
+  url: z.url().nonempty(),
+  source: z.literal(NewsSource.BdPratidin),
+  headline: z.string().nonempty(),
+  author: z.string().nonempty(),
+  publishedAt: z.string(),
+  updatedAt: z.string(),
+  section: z.string().nonempty(),
+  tags: z.string().array(),
+
+  data: z.object({
+    img: z.object({
+      src: z.url().nonempty(),
+      alt: z.string().nonempty(),
+      footer: z.string().nullable(),
+    }),
+
+    text: z.array(z.string().nonempty()).nonempty(),
+  }),
+})
+
+export type News = z.infer<typeof NewsSchema>
 
 export async function collectLinks({ limit }: { limit?: number }) {
   if (limit && limit <= 0) throw new Error("invalid limit")
@@ -30,55 +40,62 @@ export async function collectLinks({ limit }: { limit?: number }) {
 
   const $anchors = $("a")
 
-  const newsLinks = $anchors
+  const newsLinks = new Set(
+    $anchors
+      .toArray()
+      .filter((el) => {
+        try {
+          const { pathname } = new URL($(el).attr("href") ?? "")
+          const pathComponents = decodeURIComponent(pathname)
+            .split("/")
+            .filter(Boolean)
+
+          if (pathComponents.length !== 5) return false
+
+          let [_cat, year, month, date, _time] = pathComponents
+          let [yy, mm, dd] = [year, month, date].map((s) => parseInt(s))
+
+          if (isNaN(new Date(yy, mm, dd).valueOf())) return false
+        } catch (e) {
+          if (e instanceof TypeError) return false
+          throw e
+        }
+
+        return true
+      })
+      .map((el) => `${$(el).attr("href")}`),
+  )
+    .values()
     .toArray()
-    .filter((el) => {
-      try {
-        const { pathname } = new URL($(el).attr("href") ?? "")
-        const pathComponents = decodeURIComponent(pathname)
-          .split("/")
-          .filter(Boolean)
-
-        if (pathComponents.length !== 5) return false
-
-        let [_cat, year, month, date, _time] = pathComponents
-        let [yy, mm, dd] = [year, month, date].map((s) => parseInt(s))
-
-        if (isNaN(new Date(yy, mm, dd).valueOf())) return false
-      } catch (e) {
-        if (e instanceof TypeError) return false
-        throw e
-      }
-
-      return true
-    })
-    .map((el) => `${$(el).attr("href")}`)
     .slice(0, limit)
 
+  if (newsLinks.length === 0) throw new Error("zero links found")
   return newsLinks
 }
 
 export async function collectNewsFromLink(url: string | URL) {
+  // TODO: cheerio sucks ass replace with htmlparser2 asap
+
   const $ = await fetch(url)
     .then((res) => res.text())
     .then(cheerio.load)
 
   const $detailsArea = $(".detailsArea")
 
-  const newsWithoutURL = $detailsArea.extract({
-    title: { selector: ".n_head" },
+  const newsData = $detailsArea.extract({
+    headline: { selector: ".n_head" },
     author: {
       selector: "article>p:last-child",
       value: (el) => $(el).text().trim(),
     },
 
-    category: {
-      selector: ".row > .col-2 > a:nth-child(2)",
+    section: {
+      selector: ".row>.col-2>a:nth-child(2)",
       value: (el) => $(el).text().trim(),
     },
 
     publishedAt: {
-      selector: ".pubNews",
+      selector: ":has(>.bi.bi-stopwatch)",
       value: (el) => {
         let [_, __, dateText] = $(el).text().split("\n")
         dateText = dateText.trim()
@@ -126,6 +143,24 @@ export async function collectNewsFromLink(url: string | URL) {
     },
   })
 
-  const news = { url: url.toString(), ...newsWithoutURL } as News
-  return news
+  return NewsSchema.safeParse({
+    url: url.toString(),
+    source: NewsSource.BdPratidin,
+    headline: newsData.headline,
+    author: newsData.author,
+    publishedAt: newsData.publishedAt,
+    updatedAt: newsData.updatedAt ?? newsData.publishedAt,
+    section: newsData.section,
+    tags: newsData.tags,
+    data: {
+      img: newsData.img,
+      text: newsData.text,
+    },
+  })
+}
+
+export async function insertNewsToDatabase(news: News[]) {
+  prisma.news.createMany({
+    data: news,
+  })
 }
