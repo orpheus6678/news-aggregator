@@ -1,7 +1,12 @@
 {
+  "[prisma]": {
+    "editor.defaultFormatter": "Prisma.prisma"
+  },
   "editor.defaultFormatter": "esbenp.prettier-vscode",
   "editor.formatOnSave": true,
   "files.associations": {
     "*.css": "tailwindcss"
-  }
+  },
+  "files.autoSave": "off",
+  "scm.diffDecorationsGutterVisibility": "hover"
 }
