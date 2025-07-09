@@ -1,166 +1,325 @@
-import * as fs from "fs/promises"
+import assert from "assert"
 
 import { NewsSource } from "@prisma/client"
-import * as cheerio from "cheerio"
+import * as cssEngine from "css-select"
+import * as dtf from "date-fns"
+import { enUS } from "date-fns/locale/en-US"
+import * as domutils from "domutils"
+import * as htmlparser2 from "htmlparser2"
 import { z } from "zod/v4"
 
-import { banglaDateTimetoEnglish } from "@/lib/datetime"
-import prisma from "@/lib/prisma"
+const DateTimeSchema = z.custom<string>((data) =>
+  (typeof data === "object" && !(data instanceof Date)) ||
+  typeof data !== "string"
+    ? false
+    : !Number.isNaN(parseDate(data)),
+)
+
+export const InSchema = z.looseObject({
+  "@type": z.literal("NewsArticle"),
+  url: z.url({ hostname: /^www\.bd-pratidin\.com$/ }),
+  headline: z.string().nonempty(),
+  articleBody: z.string().nonempty(),
+  keywords: z.string(),
+
+  image: z.looseObject({
+    "@type": z.literal("ImageObject"),
+    url: z.url(),
+    height: z.int(),
+    width: z.int(),
+  }),
+
+  datePublished: DateTimeSchema,
+  dateModified: DateTimeSchema,
+
+  // articles with no author considered invalid for now
+  author: z.strictObject({
+    "@type": z.literal("Person"),
+    name: z.string().nonempty(),
+  }),
+})
 
 const NewsSchema = z.object({
   url: z.url().nonempty(),
   source: z.literal(NewsSource.BdPratidin),
   headline: z.string().nonempty(),
-  author: z.string().nonempty(),
-  publishedAt: z.string(),
-  updatedAt: z.string(),
-  section: z.string().nonempty(),
-  tags: z.string().array(),
+  author: z.object({ name: z.string() }),
+  publishedAt: z.date(),
+  updatedAt: z.date(),
+
+  section: z.object({
+    name: z.string().nonempty(),
+    displayName: z.string().nonempty(),
+  }),
+
+  tags: z.array(
+    z.object({
+      name: z.string().nonempty(),
+      displayName: z.string().nonempty(),
+    }),
+  ),
+
+  image: z.object({
+    src: z.url().nonempty(),
+    width: z.int().nonnegative(),
+    height: z.int().nonnegative(),
+    alt: z.string().optional(),
+  }),
 
   data: z.object({
-    img: z.object({
-      src: z.url().nonempty(),
-      alt: z.string().nonempty(),
-      footer: z.string().nullable(),
-    }),
+    imageFooter: z.string().optional(),
 
-    text: z.array(z.string().nonempty()).nonempty(),
+    // ignore articles with no signature for now
+    signature: z.string().nonempty(),
+
+    // prettier-ignore
+    body: z.array(
+      z.object({
+        type: z.literal("plain"),
+        text: z.string().nonempty(),
+      }),
+    ).nonempty(),
   }),
 })
 
-export type News = z.infer<typeof NewsSchema>
+export async function collectLinks(params?: { limit: number }) {
+  if (params && params.limit <= 0) throw new Error("invalid limit")
 
-export async function collectLinks({ limit }: { limit?: number }) {
-  if (limit && limit <= 0) throw new Error("invalid limit")
+  let isNewsLink = false
+  const newsLinks = new Set<string>()
+
+  const parser = new htmlparser2.Parser({
+    onattribute(name, value) {
+      if (name === "class" && value.includes("stretched-link"))
+        isNewsLink = true
+
+      if (isNewsLink && name === "href") {
+        newsLinks.add(value)
+        isNewsLink = false
+      }
+    },
+  })
 
   const url = "https://www.bd-pratidin.com"
-  const $ = await fetch(url)
-    .then((res) => res.text())
-    .then(cheerio.load)
+  const response = await fetch(url)
+  const html = await response.text()
+  parser.write(html)
+  parser.end()
 
-  const $anchors = $("a")
-
-  const newsLinks = new Set(
-    $anchors
-      .toArray()
-      .filter((el) => {
-        try {
-          const { pathname } = new URL($(el).attr("href") ?? "")
-          const pathComponents = decodeURIComponent(pathname)
-            .split("/")
-            .filter(Boolean)
-
-          if (pathComponents.length !== 5) return false
-
-          let [_cat, year, month, date, _time] = pathComponents
-          let [yy, mm, dd] = [year, month, date].map((s) => parseInt(s))
-
-          if (isNaN(new Date(yy, mm, dd).valueOf())) return false
-        } catch (e) {
-          if (e instanceof TypeError) return false
-          throw e
-        }
-
-        return true
-      })
-      .map((el) => `${$(el).attr("href")}`),
-  )
-    .values()
-    .toArray()
-    .slice(0, limit)
-
-  if (newsLinks.length === 0) throw new Error("zero links found")
-  return newsLinks
+  if (newsLinks.size === 0) throw new Error("zero links found")
+  return Array.from(newsLinks)
 }
 
-export async function collectNewsFromLink(url: string | URL) {
-  // TODO: cheerio sucks ass replace with htmlparser2 asap
+export let collectNewsFromLink: (url: string | URL) => Promise<CollectResult>
 
-  const $ = await fetch(url)
-    .then((res) => res.text())
-    .then(cheerio.load)
+collectNewsFromLink = async (url) => {
+  // ignores video links for now
+  url = new URL(url)
 
-  const $detailsArea = $(".detailsArea")
+  // prettier-ignore
+  if (url.pathname.includes("/video/")) return {
+    success: false,
+    error: {
+      type: "general",
+      reason: "is a video",
+      url,
+    }
+  }
 
-  const newsData = $detailsArea.extract({
-    headline: { selector: ".n_head" },
-    author: {
-      selector: "article>p:last-child",
-      value: (el) => $(el).text().trim(),
-    },
+  const response = await fetch(url)
+  const html = await response.text()
+  const doc = htmlparser2.parseDocument(html)
 
-    section: {
-      selector: ".row>.col-2>a:nth-child(2)",
-      value: (el) => $(el).text().trim(),
-    },
+  const dataNode = cssEngine.selectOne("script[type='application/json']", doc)
+  assert.ok(dataNode)
 
-    publishedAt: {
-      selector: ":has(>.bi.bi-stopwatch)",
-      value: (el) => {
-        let [_, __, dateText] = $(el).text().split("\n")
-        dateText = dateText.trim()
-        return banglaDateTimetoEnglish(dateText).toISOString()
-      },
-    },
+  // the use of String.replaceAll potentially fixes broken JSONs
+  const rawData = domutils.textContent(dataNode).replaceAll("\r\n", "")
+  const rawJson = JSON.parse(rawData)
+  let inParseResult = InSchema.safeParse(rawJson)
 
-    updatedAt: {
-      selector: ".updNews",
-      value: (el) => {
-        let [_, __, dateText] = $(el).text().split("\n")
-        dateText = dateText.trim()
-        return banglaDateTimetoEnglish(dateText).toISOString()
-      },
-    },
+  // prettier-ignore
+  if (!inParseResult.success) return {
+    success: false,
+    error: {
+      type: "inParse",
+      zodError: inParseResult.error,
+      url,
+    }
+  }
 
-    tags: [
-      {
-        selector: ".tagArea>ul>li>a",
-        value: (el) => $(el).text().trim(),
-      },
-    ],
+  const {
+    headline,
+    datePublished,
+    dateModified,
+    keywords,
+    image: __image,
+    author: { name: authorName },
+  } = inParseResult.data
 
-    img: {
-      selector: "#adf-overlay",
-      value: (el) => ({
-        src: $(el).attr("src"),
-        alt: $(el).attr("alt"),
-        footer: $(el).next("blockquote").text().trim() || null,
-      }),
-    },
+  const textBody = cssEngine.selectAll("article > p", doc)
+  assert.ok(textBody)
 
-    text: {
-      selector: "article",
-      value: (el) => {
-        const lines = $(el)
-          .text()
-          .split("\n")
-          .map((line) => line.trim())
-          .filter(Boolean)
+  let maybeSig: string | undefined
+  let sigExists = false
 
-        lines.pop()
-        return lines
-      },
-    },
-  })
+  while (textBody.length > 0) {
+    maybeSig = domutils.textContent(textBody.pop()!).trim()
 
-  return NewsSchema.safeParse({
-    url: url.toString(),
+    if (
+      maybeSig.startsWith("বিডি প্রতিদিন") ||
+      maybeSig.startsWith("বিডি-প্রতিদিন") ||
+      maybeSig.startsWith("বিডিপ্রতিদিন") ||
+      maybeSig.startsWith("লেখক") ||
+      maybeSig.startsWith("সৌজন্যে")
+    ) {
+      sigExists = true
+      break
+    }
+
+    if (maybeSig.length > 0) break
+  }
+
+  // ignore articles with no signature for now
+  // prettier-ignore
+  if (!sigExists) return {
+    success: false,
+    error: {
+      type: "general",
+      reason: "has no signature",
+      url,
+    }
+  }
+
+  assert.ok(maybeSig)
+  const signature = maybeSig
+
+  // prettier-ignore
+  if (domutils.findOne(
+    (node) => node.nodeType === Node.ELEMENT_NODE && node.tagName !== "br",
+    doc.childNodes)
+  ) return {
+    success: false,
+    error: {
+      type: "general",
+      reason: "has non-plain body",
+      url
+    }
+  }
+
+  // prettier-ignore
+  const body = textBody.map(domutils.textContent)
+    .map((s) => ({
+      type: "plain" as const,
+      text: s.trim(),
+    }))
+
+  const blockquoteFooter = cssEngine.selectOne(".blockquote-footer", doc)
+
+  // prettier-ignore
+  const imageFooter = (blockquoteFooter &&
+    domutils.textContent(blockquoteFooter).trim()) ?? undefined
+
+  const secName = url.pathname.split("/").at(1)
+  assert.ok(secName)
+
+  const secNode = cssEngine.selectOne(":has(>.bi.bi-house)+a", doc.childNodes)
+
+  assert.ok(secNode)
+  const secDispName = domutils.textContent(secNode).trim()
+  assert.ok(secDispName)
+
+  const section = {
+    name: secName,
+    displayName: secDispName,
+  }
+
+  const author = { name: authorName }
+  const publishedAt = parseDate(datePublished)
+  const updatedAt = parseDate(dateModified)
+  const tags = [] as z.infer<typeof NewsSchema>["tags"]
+
+  if (keywords.length > 0)
+    keywords
+      .split(",")
+      .map((name) => name.trim())
+      .filter(Boolean)
+      .forEach((name) => tags.push({ name, displayName: name }))
+
+  const img = domutils.getElementById("adf-overlay", doc)
+  assert.ok(img)
+  const alt = domutils.getAttributeValue(img, "alt")
+  assert.ok(alt)
+
+  const image = {
+    src: __image.url,
+    height: __image.height,
+    width: __image.width,
+    alt,
+  }
+
+  const data = {
+    imageFooter,
+    signature,
+    body,
+  }
+
+  const outParseResult = NewsSchema.safeParse({
     source: NewsSource.BdPratidin,
-    headline: newsData.headline,
-    author: newsData.author,
-    publishedAt: newsData.publishedAt,
-    updatedAt: newsData.updatedAt ?? newsData.publishedAt,
-    section: newsData.section,
-    tags: newsData.tags,
-    data: {
-      img: newsData.img,
-      text: newsData.text,
-    },
-  })
+    url: url.toString(),
+    headline,
+    publishedAt,
+    updatedAt,
+    image,
+    author,
+    section,
+    tags,
+    data,
+  } satisfies z.infer<typeof NewsSchema>)
+
+  // prettier-ignore
+  if (!outParseResult.success) return {
+    success: false,
+    error: {
+      type: "outParse",
+      zodError: outParseResult.error,
+      url,
+    }
+  }
+
+  return { success: true, news: outParseResult.data }
 }
 
-export async function insertNewsToDatabase(news: News[]) {
-  prisma.news.createMany({
-    data: news,
-  })
+function parseDate(date: string) {
+  return dtf.parse(date, "p, MMMM yyyy, EEEE", new Date(), { locale: enUS })
 }
+
+type CollectResult =
+  | {
+      success: true
+      news: z.infer<typeof NewsSchema>
+    }
+  | {
+      success: false
+      error: {
+        type: "general"
+        reason: string
+        url: URL
+      }
+    }
+  | {
+      success: false
+      error: {
+        type: "inParse"
+        zodError: z.ZodError<z.infer<typeof InSchema>>
+        url: URL
+      }
+    }
+  | {
+      success: false
+      error: {
+        type: "outParse"
+        zodError: z.ZodError<z.infer<typeof NewsSchema>>
+        url: URL
+      }
+    }
