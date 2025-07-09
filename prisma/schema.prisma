@@ -6,6 +6,10 @@ generator client {
   previewFeatures = ["queryCompiler", "relationJoins", "driverAdapters"]
 }
 
+generator json {
+  provider = "prisma-json-types-generator"
+}
+
 datasource db {
   provider  = "postgresql"
   url       = env("POSTGRES_URL")
@@ -17,17 +21,26 @@ model News {
   source      NewsSource
   url         String     @unique
   headline    String
+  author      String
   publishedAt DateTime   @map("published_at")
   updatedAt   DateTime   @updatedAt @map("updated_at")
-  category    String[]
-  author      String
-  data        Json
+
+  /// [Section]
+  section Json
+  /// ![Tag[]]
+  tags    Json
+  /// [Image]
+  image   Json
+  /// [Data]
+  data    Json
 
   @@map("news")
 }
 
 enum NewsSource {
-  BDPRATIDIN
-  PROTHOMALO
-  DAILYSTAR
+  BdPratidin
+  ProthomAlo
+  DailyStar
+
+  @@map("news_source")
 }
