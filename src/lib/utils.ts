@@ -7,9 +7,6 @@ export function cn(...inputs: ClassValue[]) {
 
 export namespace essentials {
   export function pick<T, K extends keyof T>(ob: T, keys: K[]) {
-    return Object.fromEntries(keys.map((key) => [key, ob[key]])) as Pick<
-      T,
-      (typeof keys)[number]
-    >
+    return Object.fromEntries(keys.map((key) => [key, ob[key]])) as Pick<T, K>
   }
 }

@@ -67,6 +67,7 @@ const NewsSchema = z.object({
   }),
 
   data: z.object({
+    discriminator: z.literal("bdpratidin"),
     imageFooter: z.string().optional(),
 
     // ignore articles with no signature for now
@@ -81,6 +82,8 @@ const NewsSchema = z.object({
     ).nonempty(),
   }),
 })
+
+export type News = z.infer<typeof NewsSchema>
 
 export async function collectLinks(params?: { limit: number }) {
   if (params && params.limit <= 0) throw new Error("invalid limit")
@@ -259,6 +262,7 @@ collectNewsFromLink = async (url) => {
   }
 
   const data = {
+    discriminator: "bdpratidin" as const,
     imageFooter,
     signature,
     body,
