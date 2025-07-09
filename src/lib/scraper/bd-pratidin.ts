@@ -160,8 +160,7 @@ collectNewsFromLink = async (url) => {
     author: { name: authorName },
   } = inParseResult.data
 
-  const textBody = cssEngine.selectAll("article > p", doc)
-  assert.ok(textBody)
+  const textBody = cssEngine.selectAll("article>*", doc.childNodes)
 
   let maybeSig: string | undefined
   let sigExists = false
@@ -197,7 +196,13 @@ collectNewsFromLink = async (url) => {
   assert.ok(maybeSig)
   const signature = maybeSig
 
-  if (domutils.findOne((node) => node.tagName !== "br", doc.childNodes))
+  // prettier-ignore
+  if (
+    !textBody.every(node => domutils.isTag(node) && node.tagName === "p" &&
+      node.childNodes.every((node) => node.type === "text" ||
+      (domutils.isTag(node) && node.tagName === "br"))
+    )
+  )
     return {
       success: false,
       error: {
