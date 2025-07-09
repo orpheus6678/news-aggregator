@@ -119,15 +119,15 @@ collectNewsFromLink = async (url) => {
   // ignores video links for now
   url = new URL(url)
 
-  // prettier-ignore
-  if (url.pathname.includes("/video/")) return {
-    success: false,
-    error: {
-      type: "general",
-      reason: "is a video",
-      url,
+  if (url.pathname.includes("/video/"))
+    return {
+      success: false,
+      error: {
+        type: "general",
+        reason: "is a video",
+        url,
+      },
     }
-  }
 
   const response = await fetch(url)
   const html = await response.text()
@@ -197,18 +197,15 @@ collectNewsFromLink = async (url) => {
   assert.ok(maybeSig)
   const signature = maybeSig
 
-  // prettier-ignore
-  if (domutils.findOne(
-    (node) => node.nodeType === Node.ELEMENT_NODE && node.tagName !== "br",
-    doc.childNodes)
-  ) return {
-    success: false,
-    error: {
-      type: "general",
-      reason: "has non-plain body",
-      url
+  if (domutils.findOne((node) => node.tagName !== "br", doc.childNodes))
+    return {
+      success: false,
+      error: {
+        type: "general",
+        reason: "has non-plain body",
+        url,
+      },
     }
-  }
 
   // prettier-ignore
   const body = textBody.map(domutils.textContent)
