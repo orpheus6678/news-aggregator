@@ -115,6 +115,7 @@ export async function collectLinks(params?: { limit: number }) {
 
 export let collectNewsFromLink: (url: string | URL) => Promise<CollectResult>
 
+// eslint-disable-next-line prefer-const
 collectNewsFromLink = async (url) => {
   // ignores video links for now
   url = new URL(url)
@@ -139,7 +140,7 @@ collectNewsFromLink = async (url) => {
   // the use of String.replaceAll potentially fixes broken JSONs
   const rawData = domutils.textContent(dataNode).replaceAll("\r\n", "")
   const rawJson = JSON.parse(rawData)
-  let inParseResult = InSchema.safeParse(rawJson)
+  const inParseResult = InSchema.safeParse(rawJson)
 
   // prettier-ignore
   if (!inParseResult.success) return {
