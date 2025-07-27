@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    {
+      "path": "/api/bd-pratidin",
+      "schedule": "5,35 * * * *"
+    }
+  ]
+}

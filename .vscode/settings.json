@@ -1,7 +1,11 @@
 {
-  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "[html][css][javascript][javascriptreact][typescript][typescriptreact][json]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
   "editor.formatOnSave": true,
   "files.associations": {
     "*.css": "tailwindcss"
-  }
+  },
+  "files.autoSave": "off",
+  "scm.diffDecorationsGutterVisibility": "hover"
 }
